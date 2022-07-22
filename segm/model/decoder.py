@@ -28,7 +28,8 @@ class DecoderLinear(nn.Module):
 
     def forward(self, x, im_size):
         H, W = im_size
-        GS = H // self.patch_size
+        # GS = H // self.patch_size
+        GS = 60
         x = self.head(x)
         x = rearrange(x, "b (h w) c -> b c h w", h=GS)
 
@@ -82,12 +83,13 @@ class MaskTransformer(nn.Module):
 
     def forward(self, x, fore_feature,im_size):
         H, W = im_size
-        GS = H // self.patch_size
+        # GS = H // self.patch_size
+        GS = 60
 
+        x = torch.cat((x,fore_feature), 1)
         x = self.proj_dec(x)
         # cls_emb = self.cls_emb.expand(x.size(0), -1, -1)
         # x = torch.cat((x, cls_emb,fore_feature.unsqueeze(1)), 1)
-        x = torch.cat((x,fore_feature.unsqueeze(1)), 1)
         for blk in self.blocks:
             # x = blk(x)
             masks = self.get_mask(x)

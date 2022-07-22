@@ -59,10 +59,9 @@ class AverageMeter:
 
     def write_process(self, batch_idx, datalen, epoch, time_start, write_batch_idx=20):
         if batch_idx % write_batch_idx == 0:
-            # 计算预计结束时间
             time_cost = datetime.datetime.now() - time_start
             time_eta = int(time_cost.seconds/(batch_idx+1)*(datalen-batch_idx-1))
-            time_eta = 'Eta: %02d:%02d:%02d ' % (time_eta//3600,time_eta//60,time_eta%60)
+            time_eta = 'Eta: %02d:%02d:%02d ' % (time_eta//3600,(time_eta%3600)//60,time_eta%60)
 
             msg = datetime.datetime.now().__format__("%y-%m-%d %H:%M:%S ")
             msg += time_eta
@@ -88,6 +87,7 @@ class Logger:
 
         cls.logpath = os.path.join('logs', logpath + '.log')
         cls.benchmark = args.benchmark
+        # if not os.path.exists(cls.logpath):os.makedirs(cls.logpath)
         os.makedirs(cls.logpath)
 
         logging.basicConfig(filemode='w',
@@ -126,14 +126,20 @@ class Logger:
     def log_params(cls, model):
         backbone_param = 0
         learner_param = 0
-        for k in model.state_dict().keys():
-            n_param = model.state_dict()[k].view(-1).size(0)
-            if k.split('.')[0] in 'backbone':
-                if k.split('.')[1] in ['classifier', 'fc']:  # as fc layers are not used in HSNet
-                    continue
-                backbone_param += n_param
+        # for k in model.state_dict().keys():
+        #     n_param = model.state_dict()[k].view(-1).size(0)
+        #     if k.split('.')[0] in 'backbone':
+        #         if k.split('.')[1] in ['classifier', 'fc']:  # as fc layers are not used in HSNet
+        #             continue
+        #         backbone_param += n_param
+        #     else:
+        #         learner_param += n_param
+        for k in model.parameters():
+            if k.requires_grad:
+                learner_param += k.view(-1).size(0)
             else:
-                learner_param += n_param
+                backbone_param += k.view(-1).size(0)
+
         Logger.info('Backbone # param.: %d' % backbone_param)
         Logger.info('Learnable # param.: %d' % learner_param)
         Logger.info('Total # param.: %d' % (backbone_param + learner_param))

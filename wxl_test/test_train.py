@@ -4,28 +4,37 @@
 #                 --lr 1e-3
 #                 --bsz 20
 #                 --logpath "your_experiment_name"
+# ps aux|grep prlab|grep python
+# fuser -v /dev/nvidia*
+# sudo kill -9 281099
+# cd /proc/281099
+# cat status
+# sudo kill -9 ppid
 
-# python train.py --backbone resnet50 --fold 0 --benchmark pascal --niter 50 --lr 1e-3 --bsz 20 --logpath hsnet/test
-# python train.py --fold 0 --benchmark pascal --lr 1e-3 --bsz 20 --logpath logs/segm/test1 --model segm
-
+# python train.py --backbone resnet50 --fold 0 --benchmark pascal --lr 1e-3 --bsz 20 --logpath logs
+# python train.py --backbone resnet50 --fold 0 --benchmark pascal --lr 5e-4 --bsz 8 --niter 50 --model segm --logpath segm/backbone_fssgmenter_5
+# python train.py --backbone vit_base_patch16_384 --fold 0 --benchmark pascal --lr 5e-4 --bsz 20 --niter 50 --model segm --logpath segm/backbone_fssgmenter_6_2_q_loss
+# python train.py --backbone resnet50 --fold 0 --benchmark pascal --lr 5e-4 --bsz 8 --niter 50 --model segm --logpath segm/backbone_fssgmenter_5_17_dim_256_head_4
 from train import *
 import os
 from einops import rearrange
+from model.base.correlation import Correlation
 
-os.chdir('/home/prlab/wxl/fss-frame-hsnet')
+
+os.chdir('/home/prlab/wxl/fssegmenter')
 
 # Arguments parsing
 parser = argparse.ArgumentParser(description='Hypercorrelation Squeeze Pytorch Implementation')
 parser.add_argument('--datapath', type=str, default=r'/home/prlab/wxl/dataset/dir/pcontext/VOCdevkit')
 parser.add_argument('--benchmark', type=str, default='pascal', choices=['pascal', 'coco', 'fss'])
-parser.add_argument('--model', type=str, default='hsnet', choices=['hsnet', 'segm'])
+parser.add_argument('--model', type=str, default='segm', choices=['hsnet', 'segm'])
 parser.add_argument('--logpath', type=str, default='')
 parser.add_argument('--bsz', type=int, default=2)
 parser.add_argument('--lr', type=float, default=1e-3)
-parser.add_argument('--niter', type=int, default=2000)
+parser.add_argument('--niter', type=int, default=50)
 parser.add_argument('--nworker', type=int, default=8)
 parser.add_argument('--fold', type=int, default=0, choices=[0, 1, 2, 3])
-parser.add_argument('--backbone', type=str, default='resnet50', choices=['vgg16', 'resnet50', 'resnet101'])
+parser.add_argument('--backbone', type=str, default='resnet50', choices=['vgg16', 'resnet50', 'resnet101','vit_base_patch16_384'])
 args = parser.parse_args('')
 Logger.initialize(args, training=True)
 
@@ -33,12 +42,11 @@ Logger.initialize(args, training=True)
 if args.model == 'hsnet':
     model = HypercorrSqueezeNetwork(args.backbone, False)
 elif args.model == 'segm':
-    net_kwargs = {'image_size': (400, 400),
-                  'patch_size': 16, 'd_model': 192, 'n_heads': 3, 'n_layers': 12,
-                  'normalization': 'vit', 'distilled': False, 'backbone': 'vit_tiny_patch16_384',
-                  'dropout': 0.0, 'drop_path_rate': 0.1,
-                  'decoder': {'drop_path_rate': 0.0, 'dropout': 0.1, 'n_layers': 2,
-                              'name': 'mask_transformer', 'n_cls': 1},
+    net_kwargs = {'backbone': args.backbone,
+                  'decoder': {'drop_path_rate': 0.0, 'dropout': 0.1, 'n_layers': 6,
+                              'n_heads': 4, 'd_model': 256, 'd_ff': 4 * 256,
+                              'd_encoder': 256, 'n_cls': 1, 'patch_size': 16,
+                              },
                   'n_cls': 1}
     model = create_segmenter(net_kwargs)
 Logger.log_params(model)
@@ -54,7 +62,7 @@ optimizer = optim.Adam([{"params": model.parameters(), "lr": args.lr}])
 Evaluator.initialize()
 
 # Dataset initialization
-FSSDataset.initialize(img_size=400, datapath=args.datapath, use_original_imgsize=False)
+FSSDataset.initialize(img_size=473, datapath=args.datapath, use_original_imgsize=False)
 dataloader_trn = FSSDataset.build_dataloader(args.benchmark, args.bsz, args.nworker, args.fold, 'trn')
 dataloader_val = FSSDataset.build_dataloader(args.benchmark, args.bsz, args.nworker, args.fold, 'val')
 
@@ -62,22 +70,53 @@ dataloader_val = FSSDataset.build_dataloader(args.benchmark, args.bsz, args.nwor
 best_val_miou = float('-inf')
 best_val_loss = float('inf')
 
-'''
 epoch = 0
 dataloader = dataloader_trn
 training = True
 utils.fix_randseed(None) if training else utils.fix_randseed(0)
 model.module.train_mode() if training else model.module.eval()
 average_meter = AverageMeter(dataloader.dataset)
+criterion = torch.nn.BCELoss()
 for idx, batch in enumerate(dataloader): break
+# for idx, batch in enumerate(dataloader_val): break
 batch = utils.to_cuda(batch)
 query_img,support_imgs,support_masks = batch['query_img'], batch['support_imgs'], batch['support_masks']
-self = model.module
+query_pred, support_pred, masks_list_q = model(batch['query_img'], batch['support_imgs'], batch['support_masks'])
+# query_pred, support_pred = model(batch['query_img'], batch['support_imgs'], batch['support_masks'])
+# query_pred = model(batch['query_img'], batch['support_imgs'], batch['support_masks'])
+
+
 
 # in model
-B,S,C,H,W = support_imgs.shape
-# masked support imgs
-support_imgs_masked = support_imgs * support_masks.unsqueeze(2).expand(support_imgs.shape)
+self = model.module
+decoder = self.decoder
+for blk in decoder.blocks:break
+attn = blk.attn
+
+# encoder  = self.encoder
+# feat = encoder.forward_features(query_img)
+# feat.shape
+from segm.model.backbone_fssegmenter5 import *
+'''
+B, S, C, H, W = support_imgs.shape
+q_masks = torch.zeros((B,1,H,W)).to(f'cuda:{torch.cuda.current_device()}') # q_masks output
+s_masks = torch.zeros((B,1,H,W)).to(f'cuda:{torch.cuda.current_device()}') # q_masks output
+
+
+with torch.no_grad():
+    query_feats = self.extract_feats(query_img, self.backbone, self.feat_ids, self.bottleneck_ids, self.lids)
+    support_feats = self.extract_feats(support_imgs.squeeze(1), self.backbone, self.feat_ids,
+                                       self.bottleneck_ids, self.lids)
+    support_masked_feats = self.mask_feature(support_feats, support_masks.squeeze(1).clone())
+    corr = Correlation.multilayer_correlation(query_feats, support_feats, self.stack_ids)
+
+corr_25 = corr[1][:,0]
+corr_25 = rearrange(corr_25,'b hq wq hs ws -> b (hq wq) (hs ws)')
+
+# in decoder
+decoder = self.decoder
+self = decoder
+x ,im_size = corr_25,(H,W)
 
 q_feature = self.encoder(query_img, return_features=True)
 # remove CLS/DIST tokens for decoding
@@ -150,3 +189,23 @@ masks = self.proj_mask(masks)
 #     Logger.tbd_writer.flush()
 # Logger.tbd_writer.close()
 # Logger.info('==================== Finished Training ====================')
+
+batch = torch.load('debug/batch.pth')
+query_pred2 = torch.load('debug/query_pred.pth')
+support_pred2 = torch.load('debug/support_pred.pth')
+masks_list_q2 = torch.load('debug/masks_list_q.pth')
+q_mask = torch.load('debug/q_mask0.pth')
+s_mask = torch.load('debug/s_mask0.pth')
+support_pred2 = torch.load('debug/support_pred0.pth')
+query_feat = torch.load('debug/query_feat0.pth')
+supp_feat = torch.load('debug/supp_feat0.pth')
+fore_feature = torch.load('debug/fore_feature0.pth')
+
+query_pred, support_pred,masks_list_q = model(batch['query_img'], batch['support_imgs'], batch['support_masks'])
+print(query_pred.max())
+print(query_pred.min())
+print(support_pred.max())
+print(support_pred.min())
+for mask in masks_list_q:
+    print(mask.max())
+    print(mask.min())

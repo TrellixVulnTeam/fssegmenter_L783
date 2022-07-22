@@ -12,10 +12,8 @@ from timm.models.vision_transformer import _create_vision_transformer
 
 from segm.model.vit import VisionTransformer
 from segm.model.utils import checkpoint_filter_fn
-from segm.model.decoder import DecoderLinear
-from segm.model.decoder import MaskTransformer
-from segm.model.segmenter import Segmenter
-from segm.model.fssegmenter5 import Fssegmenter
+from segm.model.decoder_mask11 import DecoderLinear,MaskTransformer
+from segm.model.backbone_fssegmenter11 import Fssegmenter
 import segm.utils.torch as ptu
 
 
@@ -100,13 +98,14 @@ def create_decoder(encoder, decoder_cfg):
 
 
 def create_segmenter(model_cfg):
-    model_cfg = model_cfg.copy()
-    decoder_cfg = model_cfg.pop("decoder")
-    decoder_cfg["n_cls"] = model_cfg["n_cls"]
+    # model_cfg = model_cfg.copy()
+    # decoder_cfg = model_cfg.pop("decoder")
+    # decoder_cfg["n_cls"] = model_cfg["n_cls"]
 
-    encoder = create_vit(model_cfg)
-    decoder = create_decoder(encoder, decoder_cfg)
-    model = Fssegmenter(encoder, decoder, n_cls=model_cfg["n_cls"])
+    # encoder = create_vit(model_cfg)
+    # decoder = create_decoder(encoder, decoder_cfg)
+    decoder = MaskTransformer(**model_cfg['decoder'])
+    model = Fssegmenter(model_cfg['backbone'], model_cfg['decoder']['patch_size'], decoder, n_cls=model_cfg["n_cls"])
 
     return model
 

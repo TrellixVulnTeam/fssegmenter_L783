@@ -49,14 +49,17 @@ class HypercorrSqueezeNetwork(nn.Module):
         with torch.no_grad():
             query_feats = self.extract_feats(query_img, self.backbone, self.feat_ids, self.bottleneck_ids, self.lids)
             support_feats = self.extract_feats(support_img, self.backbone, self.feat_ids, self.bottleneck_ids, self.lids)
-            support_feats = self.mask_feature(support_feats, support_mask.clone())
-            corr = Correlation.multilayer_correlation(query_feats, support_feats, self.stack_ids)
+            fore_feats = self.mask_feature(support_feats, support_mask.clone())
+            corr_q = Correlation.multilayer_correlation(query_feats, fore_feats, self.stack_ids)
+            corr_s = Correlation.multilayer_correlation(support_feats, fore_feats, self.stack_ids)
 
-        logit_mask = self.hpn_learner(corr)
+        logit_mask_q = self.hpn_learner(corr_q)
+        logit_mask_s = self.hpn_learner(corr_s)
         if not self.use_original_imgsize:
-            logit_mask = F.interpolate(logit_mask, support_img.size()[2:], mode='bilinear', align_corners=True)
+            logit_mask_q = F.interpolate(logit_mask_q, support_img.size()[2:], mode='bilinear', align_corners=True)
+            logit_mask_s = F.interpolate(logit_mask_s, support_img.size()[2:], mode='bilinear', align_corners=True)
 
-        return logit_mask
+        return logit_mask_q,logit_mask_s
 
     def mask_feature(self, features, support_mask):
         for idx, feature in enumerate(features):
